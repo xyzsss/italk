@@ -285,8 +285,7 @@ func handleFileMessage(client *utils.Client, msg *utils.Message) {
 
 // 处理消息撤回
 func handleRecallMessage(client *utils.Client, msg *utils.Message) {
-	if msg.MessageID <= 0 {
-		log.Printf("撤回消息失败: 无效的消息ID")
+	if msg.MessageID == 0 {
 		return
 	}
 	
@@ -297,8 +296,8 @@ func handleRecallMessage(client *utils.Client, msg *utils.Message) {
 		return
 	}
 	
-	// 获取原消息信息
-	originalMsg, err := models.GetMessageByID(msg.MessageID)
+	// 获取原消息信息，确认消息可以被撤回
+	_, err = models.GetMessageByID(msg.MessageID)
 	if err != nil {
 		log.Printf("获取原消息失败: %v", err)
 		return
