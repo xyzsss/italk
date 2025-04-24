@@ -214,8 +214,11 @@ func HandleMessage(client *utils.Client, msg *utils.Message) {
 		err = handleFileMessage(client, msg)
 	case utils.MessageTypeRecall:
 		err = handleRecallMessage(client, msg)
+	case utils.MessageTypeUser:
+		handleUserUpdate(client, msg)
+		return
 	default:
-		log.Printf("未知的消息类型: %d", msg.Type)
+		log.Printf("未知的消息类型: %s", msg.Type)
 		return
 	}
 	
@@ -357,24 +360,61 @@ func handleUserUpdate(client *utils.Client, msg *utils.Message) {
 		return
 	}
 	
+	// 获取更新后的用户信息
+	user, err := models.GetUserByIP(client.IP)
+	if err != nil {
+		log.Printf("获取用户信息失败: %v", err)
+		return
+	}
+	
+	// 发送用户信息更新消息给当前用户
+	updateMsg := &utils.Message{
+		Type:     utils.MessageTypeUser,
+		UserID:   user.ID,
+		Username: user.UsernameStr,
+	}
+	client.Hub.BroadcastMessage(updateMsg)
+	
 	// 广播用户名更新的系统消息
 	systemMsg := &utils.Message{
 		Type:    utils.MessageTypeSystem,
-		Content: client.IP + " 将昵称修改为 " + msg.Username,
+		Content: fmt.Sprintf("%s 将昵称修改为 %s", client.IP, msg.Username),
 	}
-	Hub.BroadcastMessage(systemMsg)
+	client.Hub.BroadcastMessage(systemMsg)
 	
 	// 保存系统消息到数据库
 	_, err = models.CreateMessage(client.ID, systemMsg.Content, models.MessageTypeSystem)
 	if err != nil {
 		log.Printf("保存系统消息失败: %v", err)
 	}
+	
+	// 获取最新的在线用户列表
+	users, err := models.GetOnlineUsers()
+	if err != nil {
+		log.Printf("获取在线用户失败: %v", err)
+		return
+	}
+	
+	// 过滤非真正活跃的用户
+	activeUsersList := make([]*models.User, 0)
+	for _, u := range users {
+		if isUserActive(u.ID) {
+			activeUsersList = append(activeUsersList, u)
+		}
+	}
+	
+	// 广播更新后的在线用户列表
+	usersMsg := &utils.Message{
+		Type: utils.MessageTypeUsers,
+		Data: activeUsersList,
+	}
+	client.Hub.BroadcastMessage(usersMsg)
 }
 
-// GetMessages 获取聊天历史消息
+// GetMessages 获取历史消息
 func GetMessages(c *gin.Context) {
-	limit := 50
-	messages, err := models.GetMessages(limit)
+	// 默认获取最近100条消息
+	messages, err := models.GetMessages(100)
 	if err != nil {
 		log.Printf("获取消息失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取消息失败"})

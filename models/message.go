@@ -49,7 +49,7 @@ func GetMessages(limit int) ([]*Message, error) {
 		SELECT m.id, m.user_id, u.username, m.content, m.type, m.status, m.file_name, m.file_size, m.created_at
 		FROM messages m
 		LEFT JOIN users u ON m.user_id = u.id
-		ORDER BY m.id DESC
+		ORDER BY m.created_at ASC
 		LIMIT ?
 	`
 	
@@ -92,11 +92,6 @@ func GetMessages(limit int) ([]*Message, error) {
 		messages = append(messages, &msg)
 	}
 	
-	// 逆序消息，使最早的消息在前
-	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
-		messages[i], messages[j] = messages[j], messages[i]
-	}
-	
 	return messages, nil
 }
 
@@ -111,28 +106,19 @@ func getMessagesMemory(limit int) ([]*Message, error) {
 		messages = append(messages, msg)
 	}
 	
-	// 按ID排序（从大到小）
-	// 简单选择排序，因为消息数量一般不会很多
+	// 按创建时间排序（从早到晚）
 	for i := 0; i < len(messages); i++ {
-		maxIdx := i
 		for j := i + 1; j < len(messages); j++ {
-			if messages[j].ID > messages[maxIdx].ID {
-				maxIdx = j
+			if messages[i].CreatedAt.After(messages[j].CreatedAt) {
+				messages[i], messages[j] = messages[j], messages[i]
 			}
-		}
-		if maxIdx != i {
-			messages[i], messages[maxIdx] = messages[maxIdx], messages[i]
 		}
 	}
 	
 	// 限制消息数量
 	if len(messages) > limit {
-		messages = messages[:limit]
-	}
-	
-	// 逆序消息，使最早的消息在前
-	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
-		messages[i], messages[j] = messages[j], messages[i]
+		start := len(messages) - limit
+		messages = messages[start:]
 	}
 	
 	return messages, nil

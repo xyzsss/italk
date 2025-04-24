@@ -59,6 +59,9 @@ function init() {
     // 初始化历史消息
     fetchMessages();
     
+    // 初始化标题编辑功能
+    initTitleEdit();
+    
     // 绑定事件
     bindEvents();
     
@@ -135,13 +138,12 @@ function handleMessage(message) {
             // 用户信息更新
             if (message.user_id === localUserID) {
                 usernameInput.value = message.username;
+                updateDisplayedUsername(message.username);
             }
             break;
         case MESSAGE_TYPES.USERS:
             // 更新在线用户列表
-            if (message.data) {
-                renderUserList(message.data);
-            }
+            renderUserList(message.data);
             break;
         case MESSAGE_TYPES.STATS:
             // 更新统计信息
@@ -159,12 +161,23 @@ function handleMessage(message) {
     scrollToBottom();
 }
 
+// 更新显示的用户名
+function updateDisplayedUsername(username) {
+    // 更新所有已发送的消息中的用户名
+    const ownMessages = document.querySelectorAll('.own-message .message-info');
+    ownMessages.forEach(info => {
+        info.textContent = username || '我';
+    });
+}
+
 // 渲染普通消息
 function renderMessage(message) {
-    const isOwnMessage = message.ip === currentUserIP;
+    // 判断是否是自己发送的消息
+    const isOwnMessage = message.ip === currentUserIP || 
+                        (message.user_id && message.user_id === localUserID);
     const messageElement = document.createElement('div');
     messageElement.className = `message ${isOwnMessage ? 'own-message' : 'user-message'}`;
-    messageElement.dataset.id = message.message_id; // 存储消息ID
+    messageElement.dataset.id = message.message_id;
     
     // 添加额外类名，用于样式控制
     if (message.type === MESSAGE_TYPES.IMAGE) {
@@ -180,11 +193,22 @@ function renderMessage(message) {
         messageElement.classList.add('recalled-message');
     }
     
-    // 消息头部信息（用户名/IP）
+    // 消息头部信息（用户名和时间）
     const messageInfo = document.createElement('div');
     messageInfo.className = 'message-info';
+    
+    const userInfo = document.createElement('span');
     const displayName = message.username || message.ip;
-    messageInfo.textContent = isOwnMessage ? '我' : displayName;
+    userInfo.textContent = isOwnMessage ? '我' : displayName;
+    userInfo.className = 'user-info';
+    
+    const messageTime = document.createElement('span');
+    messageTime.className = 'message-time';
+    const timestamp = message.created_at ? new Date(message.created_at) : new Date();
+    messageTime.textContent = formatTime(timestamp);
+    
+    messageInfo.appendChild(userInfo);
+    messageInfo.appendChild(messageTime);
     
     // 消息内容
     const messageContent = document.createElement('div');
@@ -243,12 +267,6 @@ function renderMessage(message) {
         }
     }
     
-    // 消息时间
-    const messageTime = document.createElement('div');
-    messageTime.className = 'message-time';
-    const timestamp = message.created_at ? new Date(message.created_at) : new Date();
-    messageTime.textContent = formatTime(timestamp);
-    
     // 添加消息操作按钮（仅自己的消息且未被撤回）
     if (isOwnMessage && message.status !== 1) {
         // 检查是否在8小时内
@@ -276,7 +294,7 @@ function renderMessage(message) {
     // 组装消息
     messageElement.appendChild(messageInfo);
     messageElement.appendChild(messageContent);
-    messageElement.appendChild(messageTime);
+    
     messagesContainer.appendChild(messageElement);
     
     // 将消息添加到映射表
@@ -370,25 +388,59 @@ function fetchMessages() {
     fetch('/api/messages')
         .then(response => response.json())
         .then(messages => {
+            // 清空消息容器
+            messagesContainer.innerHTML = '';
+            
+            // 按时间顺序渲染消息
             messages.forEach(message => {
-                if (message.type === 'system') {
-                    renderSystemMessage({
-                        type: MESSAGE_TYPES.SYSTEM,
-                        content: message.content
-                    });
+                // 转换消息类型
+                let msgType;
+                switch (message.type) {
+                    case 0:
+                        msgType = MESSAGE_TYPES.TEXT;
+                        break;
+                    case 1:
+                        msgType = MESSAGE_TYPES.IMAGE;
+                        break;
+                    case 2:
+                        msgType = MESSAGE_TYPES.EMOJI;
+                        break;
+                    case 3:
+                        msgType = MESSAGE_TYPES.SYSTEM;
+                        break;
+                    case 4:
+                        msgType = MESSAGE_TYPES.FILE;
+                        break;
+                    default:
+                        msgType = MESSAGE_TYPES.TEXT;
+                }
+                
+                // 构造消息对象
+                const wsMessage = {
+                    type: msgType,
+                    content: message.content,
+                    username: message.username,
+                    ip: '', // 历史消息可能没有IP
+                    message_id: message.id,
+                    status: message.status,
+                    file_name: message.file_name,
+                    file_size: message.file_size
+                };
+                
+                // 根据消息类型渲染
+                if (message.type === 3) { // 系统消息
+                    renderSystemMessage(wsMessage);
                 } else {
-                    renderMessage({
-                        type: message.type,
-                        content: message.content,
-                        username: message.username,
-                        ip: message.ip,
-                        created_at: message.created_at
-                    });
+                    renderMessage(wsMessage);
                 }
             });
+            
+            // 滚动到底部
             scrollToBottom();
         })
-        .catch(error => console.error('获取历史消息失败:', error));
+        .catch(error => {
+            console.error('获取历史消息失败:', error);
+        });
 }
 
 // 获取在线用户
@@ -405,7 +457,7 @@ function fetchOnlineUsers() {
 function renderUserList(users) {
     userList.innerHTML = '';
     
-    if (users.length === 0) {
+    if (!users || users.length === 0) {
         const noUsers = document.createElement('div');
         noUsers.textContent = '暂无在线用户';
         userList.appendChild(noUsers);
@@ -434,9 +486,13 @@ function renderUserList(users) {
         userElement.appendChild(userTime);
         userList.appendChild(userElement);
         
-        // 如果是当前用户，保存用户ID
+        // 如果是当前用户，保存用户ID和更新用户名输入框
         if (user.ip === currentUserIP) {
             localUserID = user.id;
+            if (user.username) {
+                usernameInput.value = user.username;
+                updateDisplayedUsername(user.username);
+            }
         }
     });
 }
@@ -667,6 +723,9 @@ function setUsername() {
     };
     
     sendMessage(message);
+    
+    // 立即更新本地显示
+    updateDisplayedUsername(username);
 }
 
 // 发送消息到服务器
@@ -731,6 +790,60 @@ function formatDateTime(date) {
 // 补零
 function padZero(num) {
     return num < 10 ? `0${num}` : num;
+}
+
+// 初始化标题编辑功能
+function initTitleEdit() {
+    const titleElement = document.getElementById('chat-title');
+    let originalTitle = '';
+    
+    // 保存原始标题
+    titleElement.addEventListener('focus', function() {
+        originalTitle = this.textContent.trim();
+    });
+    
+    // 处理标题编辑完成
+    titleElement.addEventListener('blur', function() {
+        const newTitle = this.textContent.trim();
+        if (newTitle !== originalTitle && newTitle !== '') {
+            updateChatTitle(newTitle);
+        } else if (newTitle === '') {
+            this.textContent = originalTitle;
+        }
+    });
+    
+    // 处理回车键
+    titleElement.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            this.blur();
+        }
+    });
+}
+
+// 更新聊天室标题
+function updateChatTitle(newTitle) {
+    fetch('/api/title', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ title: newTitle })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (!data.success) {
+            // 如果更新失败，恢复原标题
+            document.getElementById('chat-title').textContent = data.title;
+        }
+        // 更新页面标题
+        document.title = data.title;
+    })
+    .catch(error => {
+        console.error('更新标题失败:', error);
+        // 恢复原标题
+        document.getElementById('chat-title').textContent = document.title;
+    });
 }
 
 // 页面加载时初始化

@@ -9,7 +9,7 @@
 <body>
     <div class="container">
         <header>
-            <h1>局域网聊天室</h1>
+            <h1 id="chat-title" class="editable-title" contenteditable="true" spellcheck="false">{{ .chatTitle }}</h1>
             <div class="user-info">
                 <span id="user-ip"></span>
                 <input type="text" id="username-input" placeholder="设置昵称" maxlength="20">

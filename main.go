@@ -9,12 +9,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mikewang/go-gin-websocket-msg/controllers"
 	"github.com/mikewang/go-gin-websocket-msg/models"
+	"github.com/mikewang/go-gin-websocket-msg/utils"
 )
 
 // 应用版本和构建时间，将在编译时通过ldflags注入
 var (
 	Version   = "dev"
 	BuildTime = "unknown"
+	ChatTitle = "局域网聊天室" // 聊天室名称配置
 )
 
 // 获取本机IP地址
@@ -61,7 +63,10 @@ func main() {
 	
 	// 聊天室首页
 	r.GET("/", func(c *gin.Context) {
-		c.HTML(200, "index.html", nil)
+		c.HTML(200, "index.html", gin.H{
+			"title":     ChatTitle,
+			"chatTitle": ChatTitle,
+		})
 	})
 	
 	// WebSocket 路由
@@ -72,6 +77,33 @@ func main() {
 	r.GET("/api/messages/search", controllers.SearchMessages)
 	r.GET("/api/users/online", controllers.GetOnlineUsers)
 	r.GET("/api/statistics", controllers.GetStatistics)
+	
+	// 更新聊天室标题
+	r.POST("/api/title", func(c *gin.Context) {
+		var req struct {
+			Title string `json:"title" binding:"required"`
+		}
+		
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": "标题不能为空"})
+			return
+		}
+		
+		// 更新标题
+		ChatTitle = req.Title
+		
+		// 广播标题更新消息
+		systemMsg := &utils.Message{
+			Type:    utils.MessageTypeSystem,
+			Content: "聊天室名称已更新为：" + ChatTitle,
+		}
+		controllers.Hub.BroadcastMessage(systemMsg)
+		
+		c.JSON(200, gin.H{
+			"success": true,
+			"title":   ChatTitle,
+		})
+	})
 	
 	// 启动定时清理任务
 	go cleanupInactiveUsers()
