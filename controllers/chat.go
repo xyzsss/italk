@@ -65,7 +65,7 @@ func HandleWebSocket(c *gin.Context) {
 	user, err := models.GetUserByIP(ip)
 	if err != nil {
 		// 创建新用户
-		user, err = models.CreateUser(ip)
+		user, err = models.CreateUser(ip, "")
 		if err != nil {
 			log.Printf("创建用户失败: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建用户失败"})
@@ -204,30 +204,33 @@ func handleReadPump(client *utils.Client) {
 
 // 处理WebSocket消息
 func HandleMessage(client *utils.Client, msg *utils.Message) {
+	var err error
+	
 	// 根据消息类型处理消息
 	switch msg.Type {
 	case utils.MessageTypeText, utils.MessageTypeImage, utils.MessageTypeEmoji:
-		// 处理文本、图片和表情消息
-		handleChatMessage(client, msg)
-	case utils.MessageTypeUser:
-		// 处理用户信息更新（如更改用户名）
-		handleUserUpdate(client, msg)
+		err = handleChatMessage(client, msg)
 	case utils.MessageTypeFile:
-		// 处理文件消息
-		handleFileMessage(client, msg)
+		err = handleFileMessage(client, msg)
 	case utils.MessageTypeRecall:
-		// 处理消息撤回
-		handleRecallMessage(client, msg)
+		err = handleRecallMessage(client, msg)
+	default:
+		log.Printf("未知的消息类型: %d", msg.Type)
+		return
+	}
+	
+	if err != nil {
+		log.Printf("处理消息失败: %v", err)
 	}
 }
 
 // 处理聊天消息（文本、图片和表情）
-func handleChatMessage(client *utils.Client, msg *utils.Message) {
+func handleChatMessage(client *utils.Client, msg *utils.Message) error {
 	// 获取用户信息
 	user, err := models.GetUserByIP(client.IP)
 	if err != nil {
 		log.Printf("获取用户信息失败: %v", err)
-		return
+		return err
 	}
 	
 	// 设置消息发送者信息
@@ -235,7 +238,7 @@ func handleChatMessage(client *utils.Client, msg *utils.Message) {
 	msg.Username = user.UsernameStr
 	
 	// 保存消息到数据库
-	var msgType string
+	var msgType int
 	switch msg.Type {
 	case utils.MessageTypeText:
 		msgType = models.MessageTypeText
@@ -243,27 +246,36 @@ func handleChatMessage(client *utils.Client, msg *utils.Message) {
 		msgType = models.MessageTypeImage
 	case utils.MessageTypeEmoji:
 		msgType = models.MessageTypeEmoji
+	case utils.MessageTypeSystem:
+		msgType = models.MessageTypeSystem
+	case utils.MessageTypeFile:
+		msgType = models.MessageTypeFile
+	default:
+		msgType = models.MessageTypeText
 	}
 	
 	dbMsg, err := models.CreateMessage(user.ID, msg.Content, msgType)
 	if err != nil {
 		log.Printf("保存消息失败: %v", err)
-	} else {
-		// 设置消息ID，便于后续撤回
-		msg.MessageID = dbMsg.ID
+		return err
 	}
 	
-	// 广播消息给所有客户端
-	Hub.BroadcastMessage(msg)
+	// 设置消息ID，便于后续撤回
+	msg.MessageID = dbMsg.ID
+	
+	// 广播消息
+	client.Hub.BroadcastMessage(msg)
+	
+	return nil
 }
 
 // 处理文件消息
-func handleFileMessage(client *utils.Client, msg *utils.Message) {
+func handleFileMessage(client *utils.Client, msg *utils.Message) error {
 	// 获取用户信息
 	user, err := models.GetUserByIP(client.IP)
 	if err != nil {
 		log.Printf("获取用户信息失败: %v", err)
-		return
+		return err
 	}
 	
 	// 设置消息发送者信息
@@ -274,6 +286,7 @@ func handleFileMessage(client *utils.Client, msg *utils.Message) {
 	dbMsg, err := models.CreateFileMessage(user.ID, msg.Content, msg.FileName, msg.FileSize)
 	if err != nil {
 		log.Printf("保存文件消息失败: %v", err)
+		return err
 	} else {
 		// 设置消息ID，便于后续撤回
 		msg.MessageID = dbMsg.ID
@@ -281,26 +294,27 @@ func handleFileMessage(client *utils.Client, msg *utils.Message) {
 	
 	// 广播消息给所有客户端
 	Hub.BroadcastMessage(msg)
+	return nil
 }
 
 // 处理消息撤回
-func handleRecallMessage(client *utils.Client, msg *utils.Message) {
+func handleRecallMessage(client *utils.Client, msg *utils.Message) error {
 	if msg.MessageID == 0 {
-		return
+		return nil
 	}
 	
 	// 撤回消息
 	err := models.RecallMessage(msg.MessageID, client.ID)
 	if err != nil {
 		log.Printf("撤回消息失败: %v", err)
-		return
+		return err
 	}
 	
 	// 获取原消息信息，确认消息可以被撤回
 	_, err = models.GetMessageByID(msg.MessageID)
 	if err != nil {
 		log.Printf("获取原消息失败: %v", err)
-		return
+		return err
 	}
 	
 	// 创建撤回通知消息
@@ -325,7 +339,9 @@ func handleRecallMessage(client *utils.Client, msg *utils.Message) {
 	_, err = models.CreateMessage(client.ID, systemMsg, models.MessageTypeSystem)
 	if err != nil {
 		log.Printf("保存撤回系统消息失败: %v", err)
+		return err
 	}
+	return nil
 }
 
 // 处理用户信息更新
